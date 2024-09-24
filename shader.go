@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"unsafe"
 
@@ -14,6 +14,7 @@ type Shader struct {
 }
 
 func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Shader, error) {
+
 	// Read shader programs from disk.
 	data, err := os.ReadFile(vertexPath)
 	if err != nil {
@@ -73,6 +74,8 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 		gl.AttachShader(ID, geometryShader)
 	}
 	gl.LinkProgram(ID)
+	checkLinking(ID)
+	checkGLError()
 
 	// Check program linking
 	checkCompile(ID, "PROGRAM")
@@ -87,13 +90,24 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	return &Shader{id: ID}, nil
 }
 
-func checkCompile(shader uint32, shaderType string) error {
+func checkCompile(shader uint32, shaderType string) {
 	var success int32
 	infoLog := make([]uint8, 512)
 	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &success)
 	if success == gl.FALSE {
 		gl.GetShaderInfoLog(shader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		return fmt.Errorf("failed to compile %v shader: %v", shaderType, string(infoLog))
+		log.Printf("failed to compile %v shader: %v", shaderType, string(infoLog))
+	}
+}
+func checkLinking(program uint32) error {
+	var success int32
+	infoLog := make([]uint8, 512)
+
+	// Check linking status
+	gl.GetProgramiv(program, gl.LINK_STATUS, &success)
+	if success == gl.FALSE {
+		gl.GetProgramInfoLog(program, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
+		log.Fatalf("failed to link program: %v", string(infoLog))
 	}
 	return nil
 }

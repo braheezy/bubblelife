@@ -1,8 +1,8 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"math"
 	"runtime"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
@@ -14,6 +14,10 @@ import (
 const (
 	windowWidth  = 800
 	windowHeight = 600
+	// bubbles
+	N       = 10
+	M       = 20
+	spacing = 1.5
 )
 
 var (
@@ -27,6 +31,11 @@ var (
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
 	camera     *Camera
+	// Track FPS timing
+	frameCount        = 0
+	lastFPSUpdateTime = 0.0
+	fps               = 0.0
+	white             = mgl32.Vec3{1.0, 1.0, 1.0}
 )
 
 func init() {
@@ -51,7 +60,7 @@ func initGL() *glfw.Window {
 	glfw.WindowHint(glfw.Resizable, glfw.False)
 
 	//* GLFW window creation
-	window, err := glfw.CreateWindow(windowWidth, windowHeight, "Tower of Life", nil, nil)
+	window, err := glfw.CreateWindow(windowWidth, windowHeight, "BubbleLife", nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,13 +84,14 @@ func initGL() *glfw.Window {
 	gl.Viewport(0, 0, windowWidth, windowHeight)
 
 	gl.Enable(gl.DEPTH_TEST)
-
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.Enable(gl.PROGRAM_POINT_SIZE)
 	return window
 }
 
 func main() {
 	window := initGL()
-	defer glfw.Terminate()
 
 	// Load shaders
 	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
@@ -89,17 +99,33 @@ func main() {
 		log.Fatalln("Failed to load shaders:", err)
 	}
 
-	// Create sphere data
-	sphereVAO := createSphereVAO()
+	// Create pillar of spheres (positions only)
+	spheres := createPillarOfSpheres(10, 20, 1.5) // 10x10 grid, 20 height, 1.5 units spacing
+
+	// Init buffers for sphere positions
+	InitInstanceBuffer(spheres)
 
 	// Setup view/projection matrices
-	projection := mgl32.Perspective(mgl32.DegToRad(45.0), float32(800)/600, 0.1, 100.0)
+	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
+	shader.use()
+	shader.setMat4("projection", projection)
+
+	text := NewTextRenderer(windowWidth, windowHeight)
+	text.Load("fonts/ocraext.ttf", 24)
 
 	for !window.ShouldClose() {
 		// calculate time stats
 		currentFrame := glfw.GetTime()
 		deltaTime = currentFrame - lastFrame
 		lastFrame = currentFrame
+
+		// Calculate FPS every 1 second
+		frameCount++
+		if currentFrame-lastFPSUpdateTime >= 1.0 {
+			fps = float64(frameCount) / (currentFrame - lastFPSUpdateTime)
+			lastFPSUpdateTime = currentFrame
+			frameCount = 0
+		}
 
 		// Handle user input.
 		processInput(window)
@@ -108,87 +134,45 @@ func main() {
 		gl.ClearColor(0.0, 0.0, 0.0, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
+		text.RenderText(fmt.Sprintf("FPS:%0.2f", fps), 5.0, 5.0, 1.0, white)
+		text.RenderText(fmt.Sprintf("Spheres: %d", len(spheres)), 5.0, 30.0, 1.0, white)
+
 		// Use the shader program
 		shader.use()
 		view := camera.getViewMatrix()
 
 		// Pass matrices to the shader
-		shader.setMat4("projection", projection)
 		shader.setMat4("view", view)
 
-		// Model matrix for positioning the sphere
-		model := mgl32.Ident4() // No transformation, identity matrix
-		shader.setMat4("model", model)
-
-		// Draw the sphere
-		gl.BindVertexArray(sphereVAO)
-		gl.DrawElements(gl.TRIANGLES, numIndices, gl.UNSIGNED_INT, gl.Ptr(nil))
+		renderSpheres(shader, len(spheres))
 
 		window.SwapBuffers()
 		glfw.PollEvents()
 	}
+	glfw.Terminate()
 }
 
-var numIndices int32
+// createPillarOfSpheres generates an NxN grid of spheres stacked vertically into a pillar.
+func createPillarOfSpheres(N, M int, spacing float32) []*Sphere {
+	spheres := make([]*Sphere, 0)
 
-func createSphereVAO() uint32 {
-	const stacks = 20
-	const slices = 20
-	const radius = 1.0
+	// Iterate through the grid to create spheres at specific positions
+	for x := 0; x < N; x++ {
+		for y := 0; y < M; y++ {
+			for z := 0; z < N; z++ {
+				position := mgl32.Vec3{
+					float32(x) * spacing,
+					float32(y) * spacing,
+					float32(z) * spacing,
+				}
 
-	var vertices []float32
-	var indices []uint32
-
-	for i := 0; i <= stacks; i++ {
-		phi := float64(i) / float64(stacks) * math.Pi
-		for j := 0; j <= slices; j++ {
-			theta := float64(j) / float64(slices) * 2.0 * math.Pi
-			x := float32(radius * math.Sin(phi) * math.Cos(theta))
-			y := float32(radius * math.Cos(phi))
-			z := float32(radius * math.Sin(phi) * math.Sin(theta))
-
-			vertices = append(vertices, x, y, z)
+				// Create a new sphere with a default radius (not used in shaders, just kept for logical structure)
+				sphere := NewSphere(position, 0.5)
+				spheres = append(spheres, sphere)
+			}
 		}
 	}
-
-	for i := 0; i < stacks; i++ {
-		for j := 0; j < slices; j++ {
-			first := i*(slices+1) + j
-			second := first + slices + 1
-
-			indices = append(indices, uint32(first), uint32(second), uint32(first+1))
-			indices = append(indices, uint32(second), uint32(second+1), uint32(first+1))
-		}
-	}
-
-	// Create VAO, VBO, and EBO
-	var vao, vbo, ebo uint32
-	gl.GenVertexArrays(1, &vao)
-	gl.GenBuffers(1, &vbo)
-	gl.GenBuffers(1, &ebo)
-
-	// Bind VAO
-	gl.BindVertexArray(vao)
-
-	// Bind VBO (vertex buffer object)
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*4, gl.Ptr(vertices), gl.STATIC_DRAW)
-
-	// Bind EBO (element buffer object)
-	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
-	gl.BufferData(gl.ELEMENT_ARRAY_BUFFER, len(indices)*4, gl.Ptr(indices), gl.STATIC_DRAW)
-
-	// Define vertex attribute
-	gl.EnableVertexAttribArray(0)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 3*4, gl.Ptr(nil))
-
-	// Unbind VAO
-	gl.BindVertexArray(0)
-
-	// Store the number of indices for drawing
-	numIndices = int32(len(indices))
-
-	return vao
+	return spheres
 }
 
 // framebufferSizeCallback is called when the gl viewport is resized.
@@ -211,6 +195,15 @@ func processInput(w *glfw.Window) {
 	}
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
+	}
+
+	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
+		// Tell glfw to capture and hide the cursor
+		w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	}
+	if w.GetKey(glfw.KeyRightShift) == glfw.Press {
+		// Tell glfw to show and stop capturing cursor
+		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
 	}
 }
 
@@ -239,4 +232,11 @@ func mouseCallback(w *glfw.Window, x float64, y float64) {
 	lastY = y
 
 	camera.processMouseMovement(float32(xOffset), float32(yOffset), true)
+}
+
+func checkGLError() {
+	err := gl.GetError()
+	if err != 0 {
+		fmt.Printf("OpenGL error: %v\n", err)
+	}
 }
