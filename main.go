@@ -103,7 +103,7 @@ func main() {
 	}
 
 	// Create pillar of spheres (positions only)
-	spheres := createPillarOfSpheres(N, M, spacing, 194741008) // 10x10 grid, 20 height, 1.5 units spacing
+	spheres := createPillarOfSpheres(N, M, spacing, rand.Int63()) // 10x10 grid, 20 height, 1.5 units spacing
 
 	// Init buffers for sphere positions
 	InitInstanceBuffer(spheres)
@@ -174,25 +174,30 @@ func main() {
 	glfw.Terminate()
 }
 
-var neighborOffsets = [26][3]int{
-	{-1, -1, -1}, {-1, -1, 0}, {-1, -1, 1}, {-1, 0, -1}, {-1, 0, 0}, {-1, 0, 1}, {-1, 1, -1}, {-1, 1, 0}, {-1, 1, 1},
-	{0, -1, -1}, {0, -1, 0}, {0, -1, 1}, {0, 0, -1}, {0, 0, 1}, {0, 1, -1}, {0, 1, 0}, {0, 1, 1},
-	{1, -1, -1}, {1, -1, 0}, {1, -1, 1}, {1, 0, -1}, {1, 0, 0}, {1, 0, 1}, {1, 1, -1}, {1, 1, 0}, {1, 1, 1},
-}
-
 func countAliveNeighbors(spheres []*Sphere, N, M int, x, y, z int) int {
 	aliveNeighbors := 0
 
-	for _, offset := range neighborOffsets {
-		nx := x + offset[0]
-		ny := y + offset[1]
-		nz := z + offset[2]
+	// Iterate through all possible neighbor coordinates (-1, 0, 1) for x, y, z
+	for dx := -1; dx <= 1; dx++ {
+		for dy := -1; dy <= 1; dy++ {
+			for dz := -1; dz <= 1; dz++ {
+				// Skip the sphere itself (dx, dy, dz all zero)
+				if dx == 0 && dy == 0 && dz == 0 {
+					continue
+				}
 
-		// Bounds check
-		if nx >= 0 && nx < N && ny >= 0 && ny < M && nz >= 0 && nz < N {
-			index := (nx * M * N) + (ny * N) + nz
-			if spheres[index].CurrentState {
-				aliveNeighbors++
+				// Calculate neighbor coordinates with wrapping
+				nx := (x + dx + N) % N // Wrap around for x-axis
+				ny := (y + dy + M) % M // Wrap around for y-axis
+				nz := (z + dz + N) % N // Wrap around for z-axis
+
+				// Calculate the index of the neighbor
+				neighborIndex := (nx * M * N) + (ny * N) + nz
+
+				// Count alive neighbors
+				if spheres[neighborIndex].CurrentState {
+					aliveNeighbors++
+				}
 			}
 		}
 	}
