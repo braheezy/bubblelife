@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"runtime"
 
@@ -103,10 +104,40 @@ func main() {
 	}
 
 	// Create pillar of spheres (positions only)
-	spheres := createPillarOfSpheres(N, M, spacing, rand.Int63()) // 10x10 grid, 20 height, 1.5 units spacing
+	spheres := createPillarOfSpheres(N, M, spacing, rand.Int63())
 
 	// Init buffers for sphere positions
 	InitInstanceBuffer(spheres)
+
+	pillarWidth := (float32(N) - 1) * spacing
+	pillarHeight := (float32(M) - 1) * spacing
+	pillarDepth := (float32(N) - 1) * spacing
+	maxDimension := pillarWidth
+	if pillarHeight > maxDimension {
+		maxDimension = pillarHeight
+	}
+	if pillarDepth > maxDimension {
+		maxDimension = pillarDepth
+	}
+
+	// Field of view (in radians) and aspect ratio
+	fov := mgl32.DegToRad(45.0) // Assuming the FOV is 45 degrees
+	aspectRatio := float32(windowWidth) / float32(windowHeight)
+
+	// Calculate the distance from the center of the pillar to the camera
+	// Based on the formula: distance = (maxDimension / 2) / tan(fov / 2)
+	// Adjust the distance based on aspect ratio, favoring the smaller dimension (either width or height)
+	distance := (maxDimension / 2) / float32(math.Tan(float64(fov)/2))
+	if aspectRatio < 1.0 {
+		// If the window is taller than wide, increase the distance to fit the height
+		distance /= aspectRatio
+	}
+
+	// Set the camera's starting position based on pillar dimensions
+	// The camera is moved up by half the pillar's height to center it vertically.
+	// The camera is positioned along the Z-axis to see the entire pillar
+	cameraPos := mgl32.Vec3{pillarWidth / 2, pillarHeight / 2, distance * 1.5}
+	camera = NewDefaultCameraAtPosition(cameraPos)
 
 	// Setup view/projection matrices
 	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
