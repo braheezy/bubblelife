@@ -1,10 +1,11 @@
 #version 410 core
 
+in float radius;  // Radius passed from the vertex shader
+
 out vec4 FragColor;
 
 uniform vec3 sphereColor = vec3(0.784, 0.635, 0.784);  // Lilac color
 uniform vec3 lightDir = vec3(0.0, 0.0, 1.0);  // Light coming from the camera direction
-uniform float radius = 1;  // Sphere radius in screen-space units
 
 void main() {
     // Calculate the fragment's position within the point sprite (normalized coordinates from -1 to 1)
@@ -13,7 +14,7 @@ void main() {
     // Compute the distance from the center of the point sprite to this fragment
     float dist = length(coord);
 
-    // If the distance is greater than the radius, discard this fragment (outside the sphere)
+    // If the distance is greater than the per-instance radius, discard this fragment
     if (dist > radius) {
         discard;
     }
