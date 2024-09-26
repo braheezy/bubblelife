@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"image"
 	"log"
 	"math"
 	"math/rand"
+	"os"
 	"runtime"
+	"unsafe"
+
+	_ "github.com/mdouchement/hdr/codec/rgbe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -91,6 +96,7 @@ func initGL() *glfw.Window {
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	gl.Enable(gl.PROGRAM_POINT_SIZE)
+	gl.Enable(gl.TEXTURE_CUBE_MAP_SEAMLESS)
 	return window
 }
 
@@ -102,6 +108,62 @@ func main() {
 	if err != nil {
 		log.Fatalln("Failed to load shaders:", err)
 	}
+	backgroundShader, err := NewShader("shaders/background.vs", "shaders/background.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+	equirectangularToCubemapShader, err := NewShader("shaders/cubemap.vs", "shaders/equirectangular.fs", "")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	hdrTexture := loadHDRTexture("nebula.hdr")
+	var envCubemap uint32
+	gl.GenTextures(1, &envCubemap)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+
+	resolution := int32(4096)
+
+	for i := 0; i < 6; i++ {
+		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, resolution, resolution, 0, gl.RGB, gl.FLOAT, nil)
+	}
+
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	var captureFBO uint32
+	gl.GenFramebuffers(1, &captureFBO)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+	// Bind and convert HDRI to cubemap using a shader (similar to previous code snippets)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, captureFBO)
+
+	captureProjection := mgl32.Perspective(mgl32.DegToRad(90.0), 1.0, 0.1, 10.0)
+	captureViews := []mgl32.Mat4{
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{-1.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 1.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, -1.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, 1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+		mgl32.LookAtV(mgl32.Vec3{0.0, 0.0, 0.0}, mgl32.Vec3{0.0, 0.0, -1.0}, mgl32.Vec3{0.0, -1.0, 0.0}),
+	}
+	equirectangularToCubemapShader.use()
+	equirectangularToCubemapShader.setInt("equirectangularMap", 0)
+	equirectangularToCubemapShader.setMat4("projection", captureProjection)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
+
+	gl.Viewport(0, 0, resolution, resolution)
+	for i := 0; i < 6; i++ {
+		equirectangularToCubemapShader.setMat4("view", captureViews[i])
+		gl.FramebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), envCubemap, 0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		renderCube()
+	}
+
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
 	// Create pillar of spheres (positions only)
 	spheres := createPillarOfSpheres(N, M, spacing, rand.Int63())
@@ -143,12 +205,29 @@ func main() {
 	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
 	shader.use()
 	shader.setMat4("projection", projection)
+	shader.setVec3("sphereColor", mgl32.Vec3{0.784, 0.635, 0.784}) // Lilac color
+
+	// Set ambient light (soft white for a mystical feel)
+	shader.setVec3("ambientLight", mgl32.Vec3{0.2, 0.2, 0.3}) // A faint blueish ambient light for a cool tone
+
+	// Set light position and color (adjust based on scene)
+	lightPos := mgl32.Vec3{0.0, pillarHeight * 1.5, distance * 1.0} // Light slightly above and forward
+	lightColor := mgl32.Vec3{1.0, 1.0, 1.0}                         // White light
+	shader.setVec3("lightPos", lightPos)
+	shader.setVec3("lightColor", lightColor)
+
+	backgroundShader.use()
+	backgroundShader.setInt("environmentMap", 0)
+	backgroundShader.setMat4("projection", projection)
 
 	text := NewTextRenderer(windowWidth, windowHeight)
 	text.Load("fonts/ocraext.ttf", 24)
 
 	var lastGoLUpdateTime float64 = 0.0
 	var goLUpdateInterval float64 = 1.0
+
+	scrWidth, scrHeight := window.GetFramebufferSize()
+	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
 	for !window.ShouldClose() {
 		// calculate time stats
 		currentFrame := glfw.GetTime()
@@ -191,13 +270,27 @@ func main() {
 		text.RenderText(fmt.Sprintf("Generation #: %d", generation), 5.0, 60.0, 1.0, white)
 
 		// Use the shader program
+		gl.Enable(gl.DEPTH_TEST)
 		shader.use()
 		view := camera.getViewMatrix()
 
 		// Pass matrices to the shader
 		shader.setMat4("view", view)
+		shader.setVec3("viewPos", camera.position)
 
 		renderSpheres(shader, len(spheres))
+
+		gl.DepthFunc(gl.LEQUAL)
+		gl.Disable(gl.CULL_FACE)
+		backgroundShader.use()
+		backgroundShader.setMat4("view", mgl32.Mat4(view).Mat3().Mat4())
+
+		// Bind the cubemap texture
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+
+		// Render the cubemap (as the background)
+		renderCube()
 
 		window.SwapBuffers()
 		glfw.PollEvents()
@@ -205,6 +298,111 @@ func main() {
 	glfw.Terminate()
 }
 
+func loadHDRTexture(path string) uint32 {
+	file, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	hdrImg, _, err := image.Decode(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bounds := hdrImg.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	pixelData := make([]float32, 0, width*height*3) // 3 for RGB channels
+	for y := bounds.Max.Y; y > bounds.Min.Y; y-- {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := hdrImg.At(x, y).RGBA() // HDR images do not use alpha, ignore it
+			// Convert from uint32 range (0-65535) to float32 range (0.0-1.0)
+			pixelData = append(pixelData, float32(r)/65535.0, float32(g)/65535.0, float32(b)/65535.0)
+		}
+	}
+
+	var hdrTexture uint32
+	gl.GenTextures(1, &hdrTexture)
+	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, gl.RGB16, int32(width), int32(height), 0, gl.RGB, gl.FLOAT, gl.Ptr(pixelData))
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+	return hdrTexture
+}
+
+// renderCube() renders a 1x1 3D cube in NDC.
+var cubeVAO, cubeVBO uint32
+
+func renderCube() {
+	if cubeVAO == 0 {
+		// initialize
+		vertices := []float32{
+			// back face
+			-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, // bottom-left
+			1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 1.0, 1.0, // top-right
+			-1.0, -1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 0.0, // bottom-left
+			-1.0, 1.0, -1.0, 0.0, 0.0, -1.0, 0.0, 1.0, // top-left
+			// front face
+			-1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom-left
+			1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, // top-right
+			1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, // top-right
+			-1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, // top-left
+			-1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, // bottom-left
+			// left face
+			-1.0, 1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0, // top-right
+			-1.0, 1.0, -1.0, -1.0, 0.0, 0.0, 1.0, 1.0, // top-left
+			-1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, // bottom-left
+			-1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0, 1.0, // bottom-left
+			-1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0, // bottom-right
+			-1.0, 1.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0, // top-right
+			// right face
+			1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, // top-left
+			1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, // bottom-right
+			1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, // bottom-right
+			1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, // top-left
+			1.0, -1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, // bottom-left
+			// bottom face
+			-1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 1.0, // top-right
+			1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 1.0, 1.0, // top-left
+			1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, // bottom-left
+			1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, // bottom-left
+			-1.0, -1.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, // bottom-right
+			-1.0, -1.0, -1.0, 0.0, -1.0, 0.0, 0.0, 1.0, // top-right
+			// top face
+			-1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 1.0, // top-left
+			1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom-right
+			1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 1.0, 1.0, // top-right
+			1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, // bottom-right
+			-1.0, 1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 1.0, // top-left
+			-1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, // bottom-left
+		}
+		gl.GenVertexArrays(1, &cubeVAO)
+		gl.GenBuffers(1, &cubeVBO)
+		// fill buffer
+		gl.BindBuffer(gl.ARRAY_BUFFER, cubeVBO)
+		gl.BufferData(gl.ARRAY_BUFFER, len(vertices)*int(unsafe.Sizeof(vertices[0])), gl.Ptr(vertices), gl.STATIC_DRAW)
+		// link vertex attributes
+		gl.BindVertexArray(cubeVAO)
+		gl.EnableVertexAttribArray(0)
+		gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 8*int32(unsafe.Sizeof(float32(0))), gl.Ptr(nil))
+		gl.EnableVertexAttribArray(1)
+		gl.VertexAttribPointer(1, 3, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(3*unsafe.Sizeof(float32(0))))
+		gl.EnableVertexAttribArray(2)
+		gl.VertexAttribPointer(2, 2, gl.FLOAT, false, int32(8*unsafe.Sizeof(float32(0))), gl.Ptr(6*unsafe.Sizeof(float32(0))))
+		gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+		gl.BindVertexArray(0)
+	}
+	// render cube
+	gl.BindVertexArray(cubeVAO)
+	gl.DrawArrays(gl.TRIANGLES, 0, 36)
+	gl.BindVertexArray(0)
+}
 func countAliveNeighbors(spheres []*Sphere, N, M int, x, y, z int) int {
 	aliveNeighbors := 0
 
