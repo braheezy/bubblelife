@@ -207,14 +207,19 @@ func main() {
 	shader.setMat4("projection", projection)
 	shader.setVec3("sphereColor", mgl32.Vec3{0.784, 0.635, 0.784}) // Lilac color
 
-	// Set ambient light (soft white for a mystical feel)
-	shader.setVec3("ambientLight", mgl32.Vec3{0.2, 0.2, 0.3}) // A faint blueish ambient light for a cool tone
+	shader.setVec3("lightDir", mgl32.Vec3{1.0, 1.0, 1.0}) // Directional light coming from above and the side
+	shader.setVec3("lightColor", mgl32.Vec3{0.8, 0.8, 0.8})
 
-	// Set light position and color (adjust based on scene)
-	lightPos := mgl32.Vec3{0.0, pillarHeight * 1.5, distance * 1.0} // Light slightly above and forward
-	lightColor := mgl32.Vec3{1.0, 1.0, 1.0}                         // White light
-	shader.setVec3("lightPos", lightPos)
-	shader.setVec3("lightColor", lightColor)
+	shader.setVec3("ambientLight", mgl32.Vec3{0.784, 0.635, 0.784}) // Soft ambient light
+
+	// Set up bubble effect uniforms
+	shader.setFloat("bubbleThickness", 0.08) // Thin-film effect (adjust as needed)
+	shader.setFloat("fresnelStrength", 0.2)  // Fresnel effect strength (0.0 - 1.0)
+	shader.setFloat("transparency", 0.5)     // Base transparency level (can be adjusted)
+
+	gl.ActiveTexture(gl.TEXTURE0)                   // Activate texture unit 0
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap) // Bind the cubemap texture
+	shader.setInt("skybox", 0)
 
 	backgroundShader.use()
 	backgroundShader.setInt("environmentMap", 0)
