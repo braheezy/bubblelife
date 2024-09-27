@@ -1,11 +1,11 @@
 #version 410 core
 
 in vec3 fragPosition;  // Fragment's world position
+in vec3 fragColor;     // Color passed from the vertex shader (fix name to match vertex shader)
 in float radius;       // Sphere radius passed from vertex shader
 out vec4 FragColor;    // Final fragment color
 
 // Uniforms
-uniform vec3 sphereColor;          // Color of the sphere (albedo)
 uniform vec3 lightDir;             // Direction of the directional light
 uniform vec3 lightColor;           // Color of the light
 uniform vec3 viewPos;              // Camera position
@@ -61,6 +61,7 @@ void main() {
     vec3 normal = normalize(vec3(coord, z));  // Sphere's surface normal
 
     // Lighting calculations:
+    vec3 sphereColor = fragColor;  // Use the passed color from the vertex shader
     // 1. Ambient light (stronger for overall brightness)
     vec3 ambient = ambientLight * sphereColor * 1.2;  // Further boosted ambient
 

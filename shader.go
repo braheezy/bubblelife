@@ -75,7 +75,6 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	}
 	gl.LinkProgram(ID)
 	checkLinking(ID)
-	checkGLError()
 
 	// Check program linking
 	checkCompile(ID, "PROGRAM")
@@ -96,7 +95,7 @@ func checkCompile(shader uint32, shaderType string) {
 	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &success)
 	if success == gl.FALSE {
 		gl.GetShaderInfoLog(shader, 512, nil, (*uint8)(unsafe.Pointer(&infoLog)))
-		log.Printf("failed to compile %v shader: %v", shaderType, string(infoLog))
+		// log.Printf("failed to compile %v shader: %v", shaderType, string(infoLog))
 	}
 }
 func checkLinking(program uint32) error {

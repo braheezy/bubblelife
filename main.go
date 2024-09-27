@@ -205,7 +205,7 @@ func main() {
 	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
 	shader.use()
 	shader.setMat4("projection", projection)
-	shader.setVec3("sphereColor", mgl32.Vec3{0.784, 0.635, 0.784}) // Lilac color
+	// shader.setVec3("sphereColor", mgl32.Vec3{0.784, 0.635, 0.784}) // Lilac color
 
 	shader.setVec3("lightDir", mgl32.Vec3{1.0, 1.0, 1.0}) // Directional light coming from above and the side
 	shader.setVec3("lightColor", mgl32.Vec3{0.8, 0.8, 0.8})
@@ -215,7 +215,7 @@ func main() {
 	// Set up bubble effect uniforms
 	shader.setFloat("bubbleThickness", 0.08) // Thin-film effect (adjust as needed)
 	shader.setFloat("fresnelStrength", 0.2)  // Fresnel effect strength (0.0 - 1.0)
-	shader.setFloat("transparency", 0.5)     // Base transparency level (can be adjusted)
+	shader.setFloat("transparency", 0.8)     // Base transparency level (can be adjusted)
 
 	gl.ActiveTexture(gl.TEXTURE0)                   // Activate texture unit 0
 	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap) // Bind the cubemap texture
@@ -229,7 +229,7 @@ func main() {
 	text.Load("fonts/ocraext.ttf", 24)
 
 	var lastGoLUpdateTime float64 = 0.0
-	var goLUpdateInterval float64 = 1.0
+	var goLUpdateInterval float64 = 5.0
 
 	scrWidth, scrHeight := window.GetFramebufferSize()
 	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
@@ -258,6 +258,14 @@ func main() {
 			updateGameOfLife(spheres, N, M)
 			lastGoLUpdateTime = currentFrame // Reset the last update time
 			generation++
+
+			numGroups := FindGroups(spheres, N, M, spacing)
+
+			// 2. Assign colors to each group of spheres
+			AssignColorsToGroups(spheres, numGroups)
+
+			// 3. Update the color buffer on the GPU
+			UpdateColorBuffer(spheres)
 		}
 
 		animateSphereRadius(spheres, deltaTime)
@@ -527,6 +535,11 @@ func createPillarOfSpheres(N, M int, spacing float32, seed int64) []*Sphere {
 			}
 		}
 	}
+
+	numGroups := FindGroups(spheres, N, M, spacing)
+
+	// 2. Assign colors to each group of spheres
+	AssignColorsToGroups(spheres, numGroups)
 	return spheres
 }
 
