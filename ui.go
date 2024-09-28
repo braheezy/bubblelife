@@ -9,89 +9,231 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 )
 
-// Variables to store UI state
-var (
-	showUI = false // Toggles whether the UI is shown or not
-	// mouseLocked       = true             // Toggles whether the mouse is locked or unlocked
-	uiN, uiM          = pillarN, pillarM // Default N and M values (can be updated via UI)
-	uiSeed            = initialSeed      // Default seed value
-	uiGenerationSpeed = generationSpeed  // Default generation speed (seconds)
+const (
+	menuY   = float32(100.0)
+	spacing = float32(30.0)
 )
 
-// // Toggle the UI visibility and mouse lock state
-// func ToggleUI(w *glfw.Window) {
-// 	showUI = !showUI
-// 	if showUI {
-// 		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal) // Unlock mouse
-// 		mouseLocked = false
-// 	} else {
-// 		w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled) // Lock mouse
-// 		mouseLocked = true
-// 	}
-// }
+// Variables to store UI state
+var (
+	// Toggles whether the UI is shown or not
+	showUI = false
+	// Set default UI values to scene values
+	uiN, uiM          = pillarN, pillarM
+	uiSeed            = initialSeed
+	uiGenerationSpeed = generationSpeed
 
-var selectedOption = 0
+	// styling + colors
+	white     = mgl32.Vec3{1.0, 1.0, 1.0}
+	love      = mgl32.Vec3{235.0 / 255.0, 111.0 / 255.0, 146.0 / 255.0}
+	iris      = mgl32.Vec3{196.0 / 255.0, 167.0 / 255.0, 231.0 / 255.0}
+	textColor = white
+	// Highlight the selected option
+	highlightColor = love
 
-// RenderUI renders the simple overlay menu when the user presses Tab.
-func RenderUI(window *glfw.Window, text *TextRenderer, spheres []*Sphere, fps float64, aliveCount int, generation int) {
-	// Always render the status text (FPS, sphere count, generation number)
-	text.RenderText(fmt.Sprintf("FPS: %.2f", fps), 5.0, 5.0, 1.0, white)
-	text.RenderText(fmt.Sprintf("Spheres: %d/%d", aliveCount, len(spheres)), 5.0, 30.0, 1.0, white)
-	text.RenderText(fmt.Sprintf("Generation #: %d", generation), 5.0, 60.0, 1.0, white)
+	// debounce keys
+	tabPressed       = false
+	downPressed      = false
+	upPressed        = false
+	leftPressed      = false
+	rightPressed     = false
+	numberKeyPressed = make(map[glfw.Key]bool)
+	backspacePressed bool
+	enterPressed     bool
 
-	// Render the UI if it's toggled on
-	if showUI {
-		menuY := float32(100.0)
-		spacing := float32(30.0)
+	// Buffer to store typed input for the seed
+	inputBuffer string
+	// currently selected UI element
+	selectedOption = 0
+)
 
-		// Display the menu title
-		text.RenderText("UI Menu (Press Tab to Toggle)", 5.0, menuY, 1.0, white)
+// renderUI renders the simple overlay menu when the user presses Tab.
+func renderUI(text *TextRenderer, bubble []*Bubble, fps float64, aliveCount int, generation int) {
+	// scene stats
+	text.RenderText(fmt.Sprintf("FPS: %.2f", fps), 5.0, 5.0, 1.0, textColor)
+	text.RenderText(fmt.Sprintf("bubbles: %d/%d", aliveCount, len(bubble)), 5.0, 30.0, 1.0, textColor)
+	text.RenderText(fmt.Sprintf("generation #: %d", generation), 5.0, 60.0, 1.0, textColor)
 
-		// Highlight the selected option
-		highlightColor := mgl32.Vec3{0.2, 1.0, 0.2} // Greenish highlight color
+	// Display the menu title
+	text.RenderText("settings (tab to toggle, arrow keys to navigate)", 5.0, menuY, 1.0, textColor)
 
-		// Render the options (highlight if selected)
-
-		// Pillar Size - N
-		if selectedOption == 0 {
-			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.2, highlightColor) // Highlighted
-		} else {
-			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.0, white) // Regular
-		}
-
-		// Pillar Size - M
-		if selectedOption == 1 {
-			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.2, highlightColor) // Highlighted
-		} else {
-			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.0, white) // Regular
-		}
-
-		// Seed
-		if selectedOption == 2 {
-			if len(inputBuffer) > 0 {
-				text.RenderText(fmt.Sprintf("Seed: %s", inputBuffer), 5.0, menuY+3*spacing, 1.2, highlightColor) // Show typed input
-			} else {
-				text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.2, highlightColor) // Show current seed
-			}
-		} else {
-			text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.0, white) // Regular
-		}
-
-		// Generation Speed
-		if selectedOption == 3 {
-			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.2, highlightColor) // Highlighted
-		} else {
-			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.0, white) // Regular
-		}
+	// Pillar Size - N
+	if selectedOption == 0 {
+		text.RenderText(fmt.Sprintf("pillar width: %d", uiN), 5.0, menuY+spacing, 1.2, highlightColor)
+	} else {
+		text.RenderText(fmt.Sprintf("pillar width: %d", uiN), 5.0, menuY+spacing, 1.0, textColor)
 	}
+
+	// Pillar Size - M
+	if selectedOption == 1 {
+		text.RenderText(fmt.Sprintf("pillar height: %d", uiM), 5.0, menuY+2*spacing, 1.2, highlightColor)
+	} else {
+		text.RenderText(fmt.Sprintf("pillar heigh: %d", uiM), 5.0, menuY+2*spacing, 1.0, textColor)
+	}
+
+	// Seed
+	if selectedOption == 2 {
+		if len(inputBuffer) > 0 {
+			text.RenderText(fmt.Sprintf("seed: %s", inputBuffer), 5.0, menuY+3*spacing, 1.2, highlightColor)
+		} else {
+			text.RenderText(fmt.Sprintf("seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.2, highlightColor)
+		}
+	} else {
+		text.RenderText(fmt.Sprintf("seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.0, textColor)
+	}
+
+	// Generation Speed
+	if selectedOption == 3 {
+		text.RenderText(fmt.Sprintf("generation rate: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.2, highlightColor)
+	} else {
+		text.RenderText(fmt.Sprintf("generation rate: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.0, textColor)
+	}
+
 }
 
-// Helper function to validate and clamp the seed value between 1 and int32
+// Helper function to validate and clamp the seed value between 1 and int64
 func validateAndClampSeed(input string) int64 {
-	// Convert the string to an int32 (safely)
 	seed, err := strconv.Atoi(input)
 	if err != nil || seed < 1 {
 		return 1
 	}
 	return int64(math.Min(float64(seed), float64(math.MaxInt64)))
+}
+
+func processInput(w *glfw.Window) {
+	//* quit on escape
+	if w.GetKey(glfw.KeyEscape) == glfw.Press {
+		w.SetShouldClose(true)
+	}
+
+	//* Toggle menu on tab
+	if w.GetKey(glfw.KeyTab) == glfw.Press && !tabPressed {
+		tabPressed = true
+		showUI = !showUI
+	}
+	if w.GetKey(glfw.KeyTab) == glfw.Release {
+		tabPressed = false
+	}
+
+	if showUI {
+		// Track whether we need to recreate the pillar
+		var pillarChanged bool = false
+
+		//* Navigate UI items using Up/Down
+		if w.GetKey(glfw.KeyDown) == glfw.Press && !downPressed {
+			// Move down (wrap around)
+			selectedOption = (selectedOption + 1) % 4
+			downPressed = true
+		}
+		if w.GetKey(glfw.KeyDown) == glfw.Release {
+			downPressed = false
+		}
+
+		if w.GetKey(glfw.KeyUp) == glfw.Press && !upPressed {
+			// Move up (wrap around)
+			selectedOption = (selectedOption - 1 + 4) % 4
+			upPressed = true
+		}
+		if w.GetKey(glfw.KeyUp) == glfw.Release {
+			upPressed = false
+		}
+
+		//* Handle value changes with left/right arrow keys for selected option
+		if selectedOption == 0 { //* Pillar Size N
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				// Decrease N, but not below 2
+				uiN = max(2, uiN-1)
+				leftPressed = true
+				pillarChanged = true
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiN++
+				rightPressed = true
+				pillarChanged = true
+			}
+		} else if selectedOption == 1 { //* Pillar Size M
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				// Decrease M, but not below 2
+				uiM = max(2, uiM-1)
+				leftPressed = true
+				pillarChanged = true
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiM++
+				rightPressed = true
+				pillarChanged = true
+			}
+		} else if selectedOption == 2 { //* Seed input
+			// Handle numerical input for the seed
+			for key := glfw.Key0; key <= glfw.Key9; key++ {
+				// Check if the key is pressed and hasn't been handled yet
+				if w.GetKey(key) == glfw.Press && !numberKeyPressed[key] {
+					inputBuffer += string(rune('0' + key - glfw.Key0))
+					numberKeyPressed[key] = true
+				}
+
+				// Reset the key state when it is released
+				if w.GetKey(key) == glfw.Release {
+					numberKeyPressed[key] = false
+				}
+			}
+
+			// Backspace key to delete last digit (with debounce)
+			if w.GetKey(glfw.KeyBackspace) == glfw.Press && !backspacePressed && len(inputBuffer) > 0 {
+				inputBuffer = inputBuffer[:len(inputBuffer)-1]
+				backspacePressed = true
+			}
+			if w.GetKey(glfw.KeyBackspace) == glfw.Release {
+				backspacePressed = false
+			}
+
+			// Enter key to confirm the seed input (with debounce)
+			if w.GetKey(glfw.KeyEnter) == glfw.Press && !enterPressed && len(inputBuffer) > 0 {
+				uiSeed = validateAndClampSeed(inputBuffer)
+				inputBuffer = ""
+				pillarChanged = true
+				enterPressed = true
+			}
+			if w.GetKey(glfw.KeyEnter) == glfw.Release {
+				enterPressed = false
+			}
+		} else if selectedOption == 3 { //* Generation speed
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				uiGenerationSpeed = max(0, uiGenerationSpeed-1)
+				leftPressed = true
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiGenerationSpeed++
+				rightPressed = true
+			}
+			generationSpeed = uiGenerationSpeed
+		}
+
+		// Release left/right key press flags
+		if w.GetKey(glfw.KeyLeft) == glfw.Release {
+			leftPressed = false
+		}
+		if w.GetKey(glfw.KeyRight) == glfw.Release {
+			rightPressed = false
+		}
+
+		// If the pillar size changed or the seed was updated, recreate the pillar
+		if pillarChanged {
+			recreatePillar(uiN, uiM)
+		}
+	}
+	// Handle camera movement when UI is not being shown
+	if w.GetKey(glfw.KeyW) == glfw.Press {
+		camera.processKeyboard(FORWARD, float32(deltaTime))
+	}
+	if w.GetKey(glfw.KeyS) == glfw.Press {
+		camera.processKeyboard(BACKWARD, float32(deltaTime))
+	}
+	if w.GetKey(glfw.KeyA) == glfw.Press {
+		camera.processKeyboard(LEFT, float32(deltaTime))
+	}
+	if w.GetKey(glfw.KeyD) == glfw.Press {
+		camera.processKeyboard(RIGHT, float32(deltaTime))
+	}
+
 }

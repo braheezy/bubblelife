@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	"log"
 	"math"
@@ -19,49 +18,51 @@ import (
 
 // Settings
 const (
-	windowWidth  = 800
-	windowHeight = 600
-	// bubbles
-	spacing        = 1.5
+	windowWidth   = 800
+	windowHeight  = 600
+	bubbleSpacing = 1.5
+	// when a bubble pops, how fast that animation happens
 	animationSpeed = 3.0
+	// resolution to use for background
+	resolution = int32(4096)
 )
 
 var (
-	// Track time stats related to frame speed to account for different
-	// computer performance
-	deltaTime = 0.0 // time between current frame and last frame
-	lastFrame = 0.0 // time of last frame
+	// Track time stats related to frame speed to account for different computer performance
+	// time between current frame and last frame
+	deltaTime = 0.0
+	lastFrame = 0.0
+
 	// Last mouse positions, initially in the center of the window
 	lastX = float64(windowWidth / 2)
 	lastY = float64(windowHeight / 2)
+
 	// Handle when mouse first enters window and has large offset to center
 	firstMouse = true
-	camera     *Camera
+
+	// user-controlled fly camera
+	camera *Camera
+
 	// Track FPS timing
 	frameCount        = 0
 	lastFPSUpdateTime = 0.0
 	fps               = 0.0
-	white             = mgl32.Vec3{1.0, 1.0, 1.0}
-	generation        int
-	tabPressed        = false
-	downPressed       = false
-	upPressed         = false
-	leftPressed       = false
-	rightPressed      = false
-	initialSeed       = int64(42)
 
+	// help track generation speed, it doesn't update every render frame
+	lastGenerationTime float64
+
+	// scene settings
+	generation      int
+	initialSeed     = int64(42)
 	pillarN         = 10
 	pillarM         = 20
-	spheres         []*Sphere
+	bubbles         []*Bubble
 	generationSpeed = 5.0
 )
 
 func init() {
-
 	// This is needed to arrange that main() runs on main thread.
 	runtime.LockOSThread()
-
-	camera = NewDefaultCameraAtPosition(mgl32.Vec3{0.0, 0.0, 5.0})
 }
 
 func initGL() *glfw.Window {
@@ -102,36 +103,174 @@ func initGL() *glfw.Window {
 	gl.Viewport(0, 0, windowWidth, windowHeight)
 
 	gl.Enable(gl.DEPTH_TEST)
+
+	// for text rendering
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+
+	// for points rendering
 	gl.Enable(gl.PROGRAM_POINT_SIZE)
+
+	// for cubemap
+	gl.DepthFunc(gl.LEQUAL)
 	gl.Enable(gl.TEXTURE_CUBE_MAP_SEAMLESS)
+
 	return window
 }
 
 func main() {
 	window := initGL()
 
-	// Load shaders
+	//* Load shaders
 	shader, err := NewShader("shaders/shader.vs", "shaders/shader.fs", "")
 	if err != nil {
 		log.Fatalln("Failed to load shaders:", err)
 	}
 	backgroundShader, err := NewShader("shaders/background.vs", "shaders/background.fs", "")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("Failed to load shaders:", err)
 	}
 	equirectangularToCubemapShader, err := NewShader("shaders/cubemap.vs", "shaders/equirectangular.fs", "")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln("Failed to load shaders:", err)
 	}
 
+	//* Load textures
 	hdrTexture := loadHDRTexture("nebula.hdr")
+	envCubemap := setupCubemap(hdrTexture, equirectangularToCubemapShader)
+	// Create pillar of bubbles (positions only)
+	bubbles = createPillarOfBubbles(pillarN, pillarM, bubbleSpacing, initialSeed)
+
+	// Init buffers for bubble positions
+	initInstanceBuffer(bubbles)
+
+	// calculate sane starting camera position based on pillar size
+	pillarWidth := (float32(pillarN) - 1) * bubbleSpacing
+	pillarHeight := (float32(pillarM) - 1) * bubbleSpacing
+	pillarDepth := (float32(pillarN) - 1) * bubbleSpacing
+	maxDimension := pillarWidth
+	if pillarHeight > maxDimension {
+		maxDimension = pillarHeight
+	}
+	if pillarDepth > maxDimension {
+		maxDimension = pillarDepth
+	}
+	// Field of view (in radians) and aspect ratio
+	fov := mgl32.DegToRad(45.0) // Assuming the FOV is 45 degrees
+	aspectRatio := float32(windowWidth) / float32(windowHeight)
+	// Calculate the distance from the center of the pillar to the camera
+	// Based on the formula: distance = (maxDimension / 2) / tan(fov / 2)
+	distance := (maxDimension / 2) / float32(math.Tan(float64(fov)/2))
+	if aspectRatio < 1.0 {
+		// If the window is taller than wide, increase the distance to fit the height
+		distance /= aspectRatio
+	}
+	cameraPos := mgl32.Vec3{pillarWidth / 2, pillarHeight / 2, distance / 2}
+	camera = NewDefaultCameraAtPosition(cameraPos)
+
+	// Setup view/projection matrices
+	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
+	shader.use()
+	shader.setMat4("projection", projection)
+
+	// lights
+	shader.setVec3("lightDir", mgl32.Vec3{1.0, 1.0, 1.0})
+	shader.setVec3("lightColor", mgl32.Vec3{0.8, 0.8, 0.8})
+	shader.setVec3("ambientLight", iris)
+
+	// Set up bubble effect uniforms
+	shader.setFloat("bubbleThickness", 0.08)
+	shader.setFloat("fresnelStrength", 0.2)
+	shader.setFloat("transparency", 0.8)
+
+	// set skybox from background texture
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+	shader.setInt("skybox", 0)
+
+	backgroundShader.use()
+	backgroundShader.setInt("environmentMap", 0)
+	backgroundShader.setMat4("projection", projection)
+
+	textRenderer := NewTextRenderer(windowWidth, windowHeight)
+	textRenderer.Load("fonts/ocraext.ttf", 24)
+
+	//* render loop
+	for !window.ShouldClose() {
+		// calculate time stats
+		currentFrame := glfw.GetTime()
+		deltaTime = currentFrame - lastFrame
+		lastFrame = currentFrame
+		glfw.PollEvents()
+
+		// Calculate FPS
+		frameCount++
+		if currentFrame-lastFPSUpdateTime >= 1.0 {
+			fps = float64(frameCount) / (currentFrame - lastFPSUpdateTime)
+			lastFPSUpdateTime = currentFrame
+			frameCount = 0
+		}
+
+		processInput(window)
+
+		// update generation if enough time has passed
+		if currentFrame-lastGenerationTime >= generationSpeed {
+			updateGameOfLife(bubbles, pillarN, pillarM)
+			lastGenerationTime = currentFrame
+			generation++
+
+			// The goal is to find populations of bubbles and give them the same color. It's not great but
+			// results in a visually pleasing effect
+			numGroups := findGroups(bubbles, pillarN, pillarM, bubbleSpacing)
+			assignColorsToGroups(bubbles, numGroups)
+			updateColorBuffer(bubbles)
+		}
+
+		// "alive" and "dead" is transitioned by growing/shrinking the radius of the bubble. that animation can happen
+		// over multiple frames, so update that here.
+		animateBubbleRadius(bubbles, deltaTime)
+		updateRadiiBuffer(bubbles)
+		aliveCount := 0
+		for _, bubble := range bubbles {
+			if bubble.CurrentState && bubble.Radius > 0.0 {
+				aliveCount++
+			}
+		}
+
+		//* render
+		gl.ClearColor(0.0, 0.0, 0.0, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		shader.use()
+		view := camera.getViewMatrix()
+		shader.setMat4("view", view)
+		shader.setVec3("viewPos", camera.position)
+
+		renderBubbles(shader, len(bubbles))
+
+		backgroundShader.use()
+		backgroundShader.setMat4("view", mgl32.Mat4(view).Mat3().Mat4())
+		// Bind the cubemap texture
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
+
+		// Render the cubemap (as the background)
+		renderCube()
+
+		if showUI {
+			// draw all UI elements
+			renderUI(textRenderer, bubbles, fps, aliveCount, generation)
+		}
+
+		window.SwapBuffers()
+	}
+	glfw.Terminate()
+}
+
+func setupCubemap(textureID uint32, equirectangularToCubemapShader *Shader) uint32 {
 	var envCubemap uint32
 	gl.GenTextures(1, &envCubemap)
 	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-
-	resolution := int32(4096)
 
 	for i := 0; i < 6; i++ {
 		gl.TexImage2D(uint32(gl.TEXTURE_CUBE_MAP_POSITIVE_X+i), 0, gl.RGB16, resolution, resolution, 0, gl.RGB, gl.FLOAT, nil)
@@ -162,7 +301,7 @@ func main() {
 	equirectangularToCubemapShader.setInt("equirectangularMap", 0)
 	equirectangularToCubemapShader.setMat4("projection", captureProjection)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, hdrTexture)
+	gl.BindTexture(gl.TEXTURE_2D, textureID)
 
 	gl.Viewport(0, 0, resolution, resolution)
 	for i := 0; i < 6; i++ {
@@ -174,146 +313,10 @@ func main() {
 
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
-	// Create pillar of spheres (positions only)
-	spheres = createPillarOfSpheres(pillarN, pillarM, spacing, initialSeed)
+	// restore viewport
+	gl.Viewport(0, 0, int32(windowWidth), int32(windowHeight))
 
-	// Init buffers for sphere positions
-	InitInstanceBuffer(spheres)
-
-	pillarWidth := (float32(pillarN) - 1) * spacing
-	pillarHeight := (float32(pillarM) - 1) * spacing
-	pillarDepth := (float32(pillarN) - 1) * spacing
-	maxDimension := pillarWidth
-	if pillarHeight > maxDimension {
-		maxDimension = pillarHeight
-	}
-	if pillarDepth > maxDimension {
-		maxDimension = pillarDepth
-	}
-
-	// Field of view (in radians) and aspect ratio
-	fov := mgl32.DegToRad(45.0) // Assuming the FOV is 45 degrees
-	aspectRatio := float32(windowWidth) / float32(windowHeight)
-
-	// Calculate the distance from the center of the pillar to the camera
-	// Based on the formula: distance = (maxDimension / 2) / tan(fov / 2)
-	// Adjust the distance based on aspect ratio, favoring the smaller dimension (either width or height)
-	distance := (maxDimension / 2) / float32(math.Tan(float64(fov)/2))
-	if aspectRatio < 1.0 {
-		// If the window is taller than wide, increase the distance to fit the height
-		distance /= aspectRatio
-	}
-
-	// Set the camera's starting position based on pillar dimensions
-	// The camera is moved up by half the pillar's height to center it vertically.
-	// The camera is positioned along the Z-axis to see the entire pillar
-	cameraPos := mgl32.Vec3{pillarWidth / 2, pillarHeight / 2, distance / 2}
-	camera = NewDefaultCameraAtPosition(cameraPos)
-
-	// Setup view/projection matrices
-	projection := mgl32.Perspective(mgl32.DegToRad(45.0), windowWidth/windowHeight, 0.1, 100.0)
-	shader.use()
-	shader.setMat4("projection", projection)
-	// shader.setVec3("sphereColor", mgl32.Vec3{0.784, 0.635, 0.784}) // Lilac color
-
-	shader.setVec3("lightDir", mgl32.Vec3{1.0, 1.0, 1.0}) // Directional light coming from above and the side
-	shader.setVec3("lightColor", mgl32.Vec3{0.8, 0.8, 0.8})
-
-	shader.setVec3("ambientLight", mgl32.Vec3{0.784, 0.635, 0.784}) // Soft ambient light
-
-	// Set up bubble effect uniforms
-	shader.setFloat("bubbleThickness", 0.08) // Thin-film effect (adjust as needed)
-	shader.setFloat("fresnelStrength", 0.2)  // Fresnel effect strength (0.0 - 1.0)
-	shader.setFloat("transparency", 0.8)     // Base transparency level (can be adjusted)
-
-	gl.ActiveTexture(gl.TEXTURE0)                   // Activate texture unit 0
-	gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap) // Bind the cubemap texture
-	shader.setInt("skybox", 0)
-
-	backgroundShader.use()
-	backgroundShader.setInt("environmentMap", 0)
-	backgroundShader.setMat4("projection", projection)
-
-	text := NewTextRenderer(windowWidth, windowHeight)
-	text.Load("fonts/ocraext.ttf", 24)
-
-	var lastGoLUpdateTime float64 = 0.0
-
-	scrWidth, scrHeight := window.GetFramebufferSize()
-	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
-	for !window.ShouldClose() {
-		// calculate time stats
-		currentFrame := glfw.GetTime()
-		deltaTime = currentFrame - lastFrame
-		lastFrame = currentFrame
-
-		// Calculate FPS every 1 second
-		frameCount++
-		if currentFrame-lastFPSUpdateTime >= 1.0 {
-			fps = float64(frameCount) / (currentFrame - lastFPSUpdateTime)
-			lastFPSUpdateTime = currentFrame
-			frameCount = 0
-		}
-
-		processInput(window)
-
-		//* render
-		gl.ClearColor(0.0, 0.0, 0.0, 1.0)
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-		if currentFrame-lastGoLUpdateTime >= generationSpeed {
-			updateGameOfLife(spheres, pillarN, pillarM)
-			lastGoLUpdateTime = currentFrame // Reset the last update time
-			generation++
-
-			numGroups := FindGroups(spheres, pillarN, pillarM, spacing)
-
-			// 2. Assign colors to each group of spheres
-			AssignColorsToGroups(spheres, numGroups)
-
-			// 3. Update the color buffer on the GPU
-			UpdateColorBuffer(spheres)
-		}
-
-		animateSphereRadius(spheres, deltaTime)
-		UpdateRadiiBuffer(spheres)
-
-		aliveCount := 0
-		for _, sphere := range spheres {
-			if sphere.CurrentState && sphere.Radius > 0.0 {
-				aliveCount++
-			}
-		}
-
-		RenderUI(window, text, spheres, fps, aliveCount, generation)
-
-		// Use the shader program
-		gl.Enable(gl.DEPTH_TEST)
-		shader.use()
-		view := camera.getViewMatrix()
-
-		// Pass matrices to the shader
-		shader.setMat4("view", view)
-		shader.setVec3("viewPos", camera.position)
-
-		renderSpheres(shader, len(spheres))
-
-		gl.DepthFunc(gl.LEQUAL)
-		gl.Disable(gl.CULL_FACE)
-		backgroundShader.use()
-		backgroundShader.setMat4("view", mgl32.Mat4(view).Mat3().Mat4())
-
-		// Bind the cubemap texture
-		gl.ActiveTexture(gl.TEXTURE0)
-		gl.BindTexture(gl.TEXTURE_CUBE_MAP, envCubemap)
-
-		// Render the cubemap (as the background)
-		renderCube()
-
-		window.SwapBuffers()
-		glfw.PollEvents()
-	}
-	glfw.Terminate()
+	return envCubemap
 }
 
 func loadHDRTexture(path string) uint32 {
@@ -421,14 +424,15 @@ func renderCube() {
 	gl.DrawArrays(gl.TRIANGLES, 0, 36)
 	gl.BindVertexArray(0)
 }
-func countAliveNeighbors(spheres []*Sphere, N, M int, x, y, z int) int {
+
+func countAliveNeighbors(bubbles []*Bubble, N, M int, x, y, z int) int {
 	aliveNeighbors := 0
 
 	// Iterate through all possible neighbor coordinates (-1, 0, 1) for x, y, z
 	for dx := -1; dx <= 1; dx++ {
 		for dy := -1; dy <= 1; dy++ {
 			for dz := -1; dz <= 1; dz++ {
-				// Skip the sphere itself (dx, dy, dz all zero)
+				// Skip the bubble itself (dx, dy, dz all zero)
 				if dx == 0 && dy == 0 && dz == 0 {
 					continue
 				}
@@ -442,7 +446,7 @@ func countAliveNeighbors(spheres []*Sphere, N, M int, x, y, z int) int {
 				neighborIndex := (nx * M * N) + (ny * N) + nz
 
 				// Count alive neighbors
-				if spheres[neighborIndex].CurrentState {
+				if bubbles[neighborIndex].CurrentState {
 					aliveNeighbors++
 				}
 			}
@@ -452,27 +456,27 @@ func countAliveNeighbors(spheres []*Sphere, N, M int, x, y, z int) int {
 	return aliveNeighbors
 }
 
-func updateGameOfLife(spheres []*Sphere, N, M int) {
+func updateGameOfLife(bubbles []*Bubble, N, M int) {
 	// Apply Game of Life rules for 3D
 	for x := 0; x < N; x++ {
 		for y := 0; y < M; y++ {
 			for z := 0; z < N; z++ {
 				index := (x * M * N) + (y * N) + z
-				sphere := spheres[index]
+				bubble := bubbles[index]
 
-				aliveNeighbors := countAliveNeighbors(spheres, N, M, x, y, z)
+				aliveNeighbors := countAliveNeighbors(bubbles, N, M, x, y, z)
 
-				if sphere.CurrentState {
+				if bubble.CurrentState {
 					// Apply 3D GoL rules for alive cells
 					if aliveNeighbors < 4 || aliveNeighbors > 9 {
-						sphere.NextState = false // Cell dies
+						bubble.NextState = false // Cell dies
 					} else {
-						sphere.NextState = true // Cell survives
+						bubble.NextState = true // Cell survives
 					}
 				} else {
 					// Apply 3D GoL rules for dead cells
 					if aliveNeighbors >= 5 && aliveNeighbors <= 7 {
-						sphere.NextState = true // Cell is born
+						bubble.NextState = true // Cell is born
 					}
 				}
 			}
@@ -481,43 +485,43 @@ func updateGameOfLife(spheres []*Sphere, N, M int) {
 }
 
 // Function to animate radius changes
-func animateSphereRadius(spheres []*Sphere, deltaTime float64) {
-	for _, sphere := range spheres {
+func animateBubbleRadius(bubbles []*Bubble, deltaTime float64) {
+	for _, bubble := range bubbles {
 		// Check if there's a state change that needs to be animated
-		if sphere.CurrentState != sphere.NextState {
-			sphere.Animating = true
+		if bubble.CurrentState != bubble.NextState {
+			bubble.Animating = true
 		}
 
 		// Animate based on the state change
-		if sphere.Animating {
-			if sphere.NextState && sphere.Radius < 1.0 {
+		if bubble.Animating {
+			if bubble.NextState && bubble.Radius < 1.0 {
 				// Growing animation
-				sphere.Radius += float32(deltaTime * animationSpeed)
-				if sphere.Radius >= 1.0 {
-					sphere.Radius = 1.0
-					sphere.CurrentState = true // Commit the new state
-					sphere.Animating = false
+				bubble.Radius += float32(deltaTime * animationSpeed)
+				if bubble.Radius >= 1.0 {
+					bubble.Radius = 1.0
+					bubble.CurrentState = true // Commit the new state
+					bubble.Animating = false
 				}
-			} else if !sphere.NextState && sphere.Radius > 0.0 {
+			} else if !bubble.NextState && bubble.Radius > 0.0 {
 				// Shrinking animation
-				sphere.Radius -= float32(deltaTime * animationSpeed)
-				if sphere.Radius <= 0.0 {
-					sphere.Radius = 0.0
-					sphere.CurrentState = false // Commit the new state
-					sphere.Animating = false
+				bubble.Radius -= float32(deltaTime * animationSpeed)
+				if bubble.Radius <= 0.0 {
+					bubble.Radius = 0.0
+					bubble.CurrentState = false // Commit the new state
+					bubble.Animating = false
 				}
 			}
 		}
 	}
 }
 
-// createPillarOfSpheres generates an NxN grid of spheres stacked vertically into a pillar.
-func createPillarOfSpheres(N, M int, spacing float32, seed int64) []*Sphere {
-	spheres := make([]*Sphere, 0)
+// createPillarOfBubbles generates an NxN grid of bubbles stacked vertically into a pillar.
+func createPillarOfBubbles(N, M int, spacing float32, seed int64) []*Bubble {
+	bubbles := make([]*Bubble, 0)
 
 	rnd := rand.New(rand.NewSource(seed))
 
-	// Iterate through the grid to create spheres at specific positions
+	// Iterate through the grid to create bubbles at specific positions
 	for x := 0; x < N; x++ {
 		for y := 0; y < M; y++ {
 			for z := 0; z < N; z++ {
@@ -527,174 +531,30 @@ func createPillarOfSpheres(N, M int, spacing float32, seed int64) []*Sphere {
 					float32(z) * spacing,
 				}
 
-				// Create a new sphere with a default radius (not used in shaders, just kept for logical structure)
-				sphere := NewSphere(position)
+				// Create a new bubble with a default radius (not used in shaders, just kept for logical structure)
+				bubble := NewBubble(position)
 
 				if rnd.Float32() < 0.4 {
-					sphere.CurrentState = true
-					sphere.NextState = true
-					sphere.Radius = 1.0
+					bubble.CurrentState = true
+					bubble.NextState = true
+					bubble.Radius = 1.0
 				}
 
-				spheres = append(spheres, sphere)
+				bubbles = append(bubbles, bubble)
 			}
 		}
 	}
 
-	numGroups := FindGroups(spheres, N, M, spacing)
+	numGroups := findGroups(bubbles, N, M, spacing)
 
-	// 2. Assign colors to each group of spheres
-	AssignColorsToGroups(spheres, numGroups)
-	return spheres
+	// 2. Assign colors to each group of bubbles
+	assignColorsToGroups(bubbles, numGroups)
+	return bubbles
 }
 
 // framebufferSizeCallback is called when the gl viewport is resized.
 func framebufferSizeCallback(w *glfw.Window, width int, height int) {
 	gl.Viewport(0, 0, int32(width), int32(height))
-}
-
-var inputBuffer string // Buffer to store typed input for the seed
-var numberKeyPressed = make(map[glfw.Key]bool)
-var backspacePressed bool
-var enterPressed bool
-
-func processInput(w *glfw.Window) {
-	if w.GetKey(glfw.KeyEscape) == glfw.Press {
-		w.SetShouldClose(true)
-	}
-
-	if w.GetKey(glfw.KeyTab) == glfw.Press && !tabPressed {
-		tabPressed = true
-		showUI = !showUI
-
-		if showUI {
-			// Unlock the mouse for UI interaction
-			w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
-		} else {
-			// Lock the mouse for camera control
-			w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
-		}
-	}
-	if w.GetKey(glfw.KeyTab) == glfw.Release {
-		tabPressed = false
-	}
-
-	if showUI {
-		// Handle UI navigation using arrow keys
-		var pillarChanged bool = false // Track whether we need to recreate the pillar
-
-		if w.GetKey(glfw.KeyDown) == glfw.Press && !downPressed {
-			selectedOption = (selectedOption + 1) % 4 // Move down (wrap around)
-			downPressed = true
-		}
-		if w.GetKey(glfw.KeyDown) == glfw.Release {
-			downPressed = false
-		}
-
-		if w.GetKey(glfw.KeyUp) == glfw.Press && !upPressed {
-			selectedOption = (selectedOption - 1 + 4) % 4 // Move up (wrap around)
-			upPressed = true
-		}
-		if w.GetKey(glfw.KeyUp) == glfw.Release {
-			upPressed = false
-		}
-
-		// Handle value changes with left/right arrow keys for selected option
-		if selectedOption == 0 { // Pillar Size N
-			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
-				uiN = max(2, uiN-1) // Decrease N, but not below 2
-				leftPressed = true
-				pillarChanged = true // Mark pillar for recreation
-			}
-			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
-				uiN++ // Increase N
-				rightPressed = true
-				pillarChanged = true // Mark pillar for recreation
-			}
-		} else if selectedOption == 1 { // Pillar Size M
-			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
-				uiM = max(2, uiM-1) // Decrease M, but not below 2
-				leftPressed = true
-				pillarChanged = true // Mark pillar for recreation
-			}
-			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
-				uiM++ // Increase M
-				rightPressed = true
-				pillarChanged = true // Mark pillar for recreation
-			}
-		} else if selectedOption == 2 { // Seed input
-			// Handle numerical input for the seed
-			for key := glfw.Key0; key <= glfw.Key9; key++ {
-				// Check if the key is pressed and hasn't been handled yet
-				if w.GetKey(key) == glfw.Press && !numberKeyPressed[key] {
-					inputBuffer += string(rune('0' + key - glfw.Key0)) // Append the pressed number
-					numberKeyPressed[key] = true                       // Mark the key as pressed
-				}
-
-				// Reset the key state when it is released
-				if w.GetKey(key) == glfw.Release {
-					numberKeyPressed[key] = false
-				}
-			}
-
-			// Backspace key to delete last digit (with debounce)
-			if w.GetKey(glfw.KeyBackspace) == glfw.Press && !backspacePressed && len(inputBuffer) > 0 {
-				inputBuffer = inputBuffer[:len(inputBuffer)-1] // Remove last character
-				backspacePressed = true                        // Mark backspace as pressed
-			}
-			if w.GetKey(glfw.KeyBackspace) == glfw.Release {
-				backspacePressed = false // Reset backspace state when released
-			}
-
-			// Enter key to confirm the seed input (with debounce)
-			if w.GetKey(glfw.KeyEnter) == glfw.Press && !enterPressed && len(inputBuffer) > 0 {
-				uiSeed = validateAndClampSeed(inputBuffer) // Validate and clamp the seed value
-				inputBuffer = ""                           // Clear the input buffer
-				pillarChanged = true                       // Mark pillar for recreation
-				enterPressed = true                        // Mark enter as pressed
-			}
-			if w.GetKey(glfw.KeyEnter) == glfw.Release {
-				enterPressed = false // Reset enter state when released
-			}
-		} else if selectedOption == 3 { // Generation speed
-			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
-				uiGenerationSpeed = max(0, uiGenerationSpeed-1)
-				leftPressed = true
-			}
-			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
-				uiGenerationSpeed++ // Increase M
-				rightPressed = true
-			}
-			generationSpeed = uiGenerationSpeed
-		}
-
-		// Release left/right key press flags
-		if w.GetKey(glfw.KeyLeft) == glfw.Release {
-			leftPressed = false
-		}
-		if w.GetKey(glfw.KeyRight) == glfw.Release {
-			rightPressed = false
-		}
-
-		// If the pillar size changed or the seed was updated, recreate the pillar
-		if pillarChanged {
-			RecreatePillar(uiN, uiM) // Use the updated values of uiN, uiM, and uiSeed
-		}
-	} else {
-		// Handle camera movement when UI is not being shown
-		if w.GetKey(glfw.KeyW) == glfw.Press {
-			camera.processKeyboard(FORWARD, float32(deltaTime))
-		}
-		if w.GetKey(glfw.KeyS) == glfw.Press {
-			camera.processKeyboard(BACKWARD, float32(deltaTime))
-		}
-		if w.GetKey(glfw.KeyA) == glfw.Press {
-			camera.processKeyboard(LEFT, float32(deltaTime))
-		}
-		if w.GetKey(glfw.KeyD) == glfw.Press {
-			camera.processKeyboard(RIGHT, float32(deltaTime))
-		}
-	}
 }
 
 // keyCallback is called when the gl viewport is resized.
@@ -703,6 +563,7 @@ func keyCallback(w *glfw.Window, key glfw.Key, scancode int, action glfw.Action,
 		w.SetShouldClose(true)
 	}
 }
+
 func scrollCallback(w *glfw.Window, xOffset float64, yOffset float64) {
 	camera.processMouseScroll(float32(yOffset))
 }
@@ -721,22 +582,14 @@ func mouseCallback(w *glfw.Window, x float64, y float64) {
 	lastX = x
 	lastY = y
 
-	if !showUI {
-		camera.processMouseMovement(float32(xOffset), float32(yOffset), true)
-	}
+	camera.processMouseMovement(float32(xOffset), float32(yOffset), true)
 }
 
-func checkGLError() {
-	err := gl.GetError()
-	if err != 0 {
-		fmt.Printf("OpenGL error: %v\n", err)
-	}
-}
-func RecreatePillar(N, M int) {
-	spheres = createPillarOfSpheres(N, M, spacing, uiSeed) // Use the updated N and M from the UI
-	numGroups := FindGroups(spheres, N, M, spacing)        // Find connected groups
-	AssignColorsToGroups(spheres, numGroups)               // Assign colors based on group
-	InitInstanceBuffer(spheres)                            // Update GPU buffers with the new spheres
+func recreatePillar(N, M int) {
+	bubbles = createPillarOfBubbles(N, M, bubbleSpacing, uiSeed)
+	numGroups := findGroups(bubbles, N, M, bubbleSpacing)
+	assignColorsToGroups(bubbles, numGroups)
+	initInstanceBuffer(bubbles)
 	pillarM = M
 	pillarN = N
 }

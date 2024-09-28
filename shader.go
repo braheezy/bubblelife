@@ -41,7 +41,7 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 		defer geometryFreeFunc()
 		gl.ShaderSource(geometryShader, 1, sourceString, nil)
 		gl.CompileShader(geometryShader)
-		checkCompile(geometryShader, "GEOMETRY")
+		checkCompile(geometryShader)
 	}
 
 	// Create a vertex shader object ID
@@ -63,8 +63,8 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	gl.CompileShader(fragmentShader)
 
 	// Check shader compilation.
-	checkCompile(fragmentShader, "VERTEX")
-	checkCompile(fragmentShader, "FRAGMENT")
+	checkCompile(fragmentShader)
+	checkCompile(fragmentShader)
 
 	// Link all shaders together to form a shader program, which is used during rendering.
 	ID := gl.CreateProgram()
@@ -77,7 +77,7 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	checkLinking(ID)
 
 	// Check program linking
-	checkCompile(ID, "PROGRAM")
+	checkCompile(ID)
 
 	// Clean up shader objects
 	gl.DeleteShader(vertexShader)
@@ -89,7 +89,7 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	return &Shader{id: ID}, nil
 }
 
-func checkCompile(shader uint32, shaderType string) {
+func checkCompile(shader uint32) {
 	var success int32
 	infoLog := make([]uint8, 512)
 	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &success)
@@ -115,23 +115,12 @@ func (s *Shader) use() {
 	gl.UseProgram(s.id)
 }
 
-func (s *Shader) setBool(name string, value bool) {
-	var v0 int32
-	if value {
-		v0 = 1
-	}
-	gl.Uniform1i(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), v0)
-}
-
 func (s *Shader) setInt(name string, value int32) {
 	gl.Uniform1i(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), value)
 }
 
 func (s *Shader) setFloat(name string, value float32) {
 	gl.Uniform1f(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), value)
-}
-func (s *Shader) setMat3(name string, value mgl32.Mat3) {
-	gl.UniformMatrix3fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])
 }
 func (s *Shader) setMat4(name string, value mgl32.Mat4) {
 	gl.UniformMatrix4fv(gl.GetUniformLocation(s.id, gl.Str(name+"\x00")), 1, false, &value[0])

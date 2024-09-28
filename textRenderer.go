@@ -42,11 +42,7 @@ type TextRenderer struct {
 func NewTextRenderer(width, height int) *TextRenderer {
 	tr := TextRenderer{}
 	// load and configure shader
-	shader, err := NewShader("shaders/text_2d.vs", "shaders/text_2d.fs", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	tr.shader = shader
+	tr.shader, _ = NewShader("shaders/text_2d.vs", "shaders/text_2d.fs", "")
 	tr.shader.use()
 	tr.shader.setMat4("projection", mgl32.Ortho2D(0.0, float32(width), float32(height), 0.0))
 	tr.shader.setInt("text", 0)
