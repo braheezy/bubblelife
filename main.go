@@ -22,8 +22,6 @@ const (
 	windowWidth  = 800
 	windowHeight = 600
 	// bubbles
-	N              = 10
-	M              = 20
 	spacing        = 1.5
 	animationSpeed = 3.0
 )
@@ -45,6 +43,16 @@ var (
 	fps               = 0.0
 	white             = mgl32.Vec3{1.0, 1.0, 1.0}
 	generation        int
+	tabPressed        = false
+	downPressed       = false
+	upPressed         = false
+	leftPressed       = false
+	rightPressed      = false
+	initialSeed       = int64(42)
+
+	pillarN = 10
+	pillarM = 20
+	spheres []*Sphere
 )
 
 func init() {
@@ -82,7 +90,7 @@ func initGL() *glfw.Window {
 	window.SetCursorPosCallback(mouseCallback)
 	window.SetScrollCallback(scrollCallback)
 	// Tell glfw to capture and hide the cursor
-	// window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+	window.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
 
 	//* Load OS-specific OpenGL function pointers
 	if err := gl.Init(); err != nil {
@@ -166,14 +174,14 @@ func main() {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 
 	// Create pillar of spheres (positions only)
-	spheres := createPillarOfSpheres(N, M, spacing, rand.Int63())
+	spheres = createPillarOfSpheres(pillarN, pillarM, spacing, initialSeed)
 
 	// Init buffers for sphere positions
 	InitInstanceBuffer(spheres)
 
-	pillarWidth := (float32(N) - 1) * spacing
-	pillarHeight := (float32(M) - 1) * spacing
-	pillarDepth := (float32(N) - 1) * spacing
+	pillarWidth := (float32(pillarN) - 1) * spacing
+	pillarHeight := (float32(pillarM) - 1) * spacing
+	pillarDepth := (float32(pillarN) - 1) * spacing
 	maxDimension := pillarWidth
 	if pillarHeight > maxDimension {
 		maxDimension = pillarHeight
@@ -198,7 +206,7 @@ func main() {
 	// Set the camera's starting position based on pillar dimensions
 	// The camera is moved up by half the pillar's height to center it vertically.
 	// The camera is positioned along the Z-axis to see the entire pillar
-	cameraPos := mgl32.Vec3{pillarWidth / 2, pillarHeight / 2, distance * 1.5}
+	cameraPos := mgl32.Vec3{pillarWidth / 2, pillarHeight / 2, distance / 2}
 	camera = NewDefaultCameraAtPosition(cameraPos)
 
 	// Setup view/projection matrices
@@ -247,7 +255,6 @@ func main() {
 			frameCount = 0
 		}
 
-		// Handle user input.
 		processInput(window)
 
 		//* render
@@ -255,11 +262,11 @@ func main() {
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
 		if currentFrame-lastGoLUpdateTime >= goLUpdateInterval {
-			updateGameOfLife(spheres, N, M)
+			updateGameOfLife(spheres, pillarN, pillarM)
 			lastGoLUpdateTime = currentFrame // Reset the last update time
 			generation++
 
-			numGroups := FindGroups(spheres, N, M, spacing)
+			numGroups := FindGroups(spheres, pillarN, pillarM, spacing)
 
 			// 2. Assign colors to each group of spheres
 			AssignColorsToGroups(spheres, numGroups)
@@ -278,9 +285,7 @@ func main() {
 			}
 		}
 
-		text.RenderText(fmt.Sprintf("FPS:%0.2f", fps), 5.0, 5.0, 1.0, white)
-		text.RenderText(fmt.Sprintf("Spheres: %d/%d", aliveCount, len(spheres)), 5.0, 30.0, 1.0, white)
-		text.RenderText(fmt.Sprintf("Generation #: %d", generation), 5.0, 60.0, 1.0, white)
+		RenderUI(window, text, spheres, fps, aliveCount, generation)
 
 		// Use the shader program
 		gl.Enable(gl.DEPTH_TEST)
@@ -552,26 +557,93 @@ func processInput(w *glfw.Window) {
 		w.SetShouldClose(true)
 	}
 
-	if w.GetKey(glfw.KeyW) == glfw.Press {
-		camera.processKeyboard(FORWARD, float32(deltaTime))
+	if w.GetKey(glfw.KeyTab) == glfw.Press && !tabPressed {
+		tabPressed = true
+		showUI = !showUI
+
+		if showUI {
+			// Unlock the mouse for UI interaction
+			w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		} else {
+			// Lock the mouse for camera control
+			w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
+		}
 	}
-	if w.GetKey(glfw.KeyS) == glfw.Press {
-		camera.processKeyboard(BACKWARD, float32(deltaTime))
-	}
-	if w.GetKey(glfw.KeyA) == glfw.Press {
-		camera.processKeyboard(LEFT, float32(deltaTime))
-	}
-	if w.GetKey(glfw.KeyD) == glfw.Press {
-		camera.processKeyboard(RIGHT, float32(deltaTime))
+	if w.GetKey(glfw.KeyTab) == glfw.Release {
+		tabPressed = false
 	}
 
-	if w.GetKey(glfw.KeyLeftShift) == glfw.Press {
-		// Tell glfw to capture and hide the cursor
-		w.SetInputMode(glfw.CursorMode, glfw.CursorDisabled)
-	}
-	if w.GetKey(glfw.KeyRightShift) == glfw.Press {
-		// Tell glfw to show and stop capturing cursor
-		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+	if showUI {
+		// Handle UI navigation using arrow keys
+		var pillarChanged bool = false // Track whether we need to recreate the pillar
+
+		if w.GetKey(glfw.KeyDown) == glfw.Press && !downPressed {
+			selectedOption = (selectedOption + 1) % 4 // Move down (wrap around)
+			downPressed = true
+		}
+		if w.GetKey(glfw.KeyDown) == glfw.Release {
+			downPressed = false
+		}
+
+		if w.GetKey(glfw.KeyUp) == glfw.Press && !upPressed {
+			selectedOption = (selectedOption - 1 + 4) % 4 // Move up (wrap around)
+			upPressed = true
+		}
+		if w.GetKey(glfw.KeyUp) == glfw.Release {
+			upPressed = false
+		}
+
+		// Handle value changes with left/right arrow keys for selected option
+		if selectedOption == 0 { // Pillar Size N
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				uiN = max(2, uiN-1) // Decrease N, but not below 2
+				leftPressed = true
+				pillarChanged = true // Mark pillar for recreation
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiN++ // Increase N
+				rightPressed = true
+				pillarChanged = true // Mark pillar for recreation
+			}
+		} else if selectedOption == 1 { // Pillar Size M
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				uiM = max(2, uiM-1) // Decrease M, but not below 2
+				leftPressed = true
+				pillarChanged = true // Mark pillar for recreation
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiM++ // Increase M
+				rightPressed = true
+				pillarChanged = true // Mark pillar for recreation
+			}
+		}
+
+		// Release left/right key press flags
+		if w.GetKey(glfw.KeyLeft) == glfw.Release {
+			leftPressed = false
+		}
+		if w.GetKey(glfw.KeyRight) == glfw.Release {
+			rightPressed = false
+		}
+
+		// If the pillar size changed, recreate the pillar
+		if pillarChanged {
+			RecreatePillar(uiN, uiM)
+		}
+	} else {
+		// Handle camera movement when UI is not being shown
+		if w.GetKey(glfw.KeyW) == glfw.Press {
+			camera.processKeyboard(FORWARD, float32(deltaTime))
+		}
+		if w.GetKey(glfw.KeyS) == glfw.Press {
+			camera.processKeyboard(BACKWARD, float32(deltaTime))
+		}
+		if w.GetKey(glfw.KeyA) == glfw.Press {
+			camera.processKeyboard(LEFT, float32(deltaTime))
+		}
+		if w.GetKey(glfw.KeyD) == glfw.Press {
+			camera.processKeyboard(RIGHT, float32(deltaTime))
+		}
 	}
 }
 
@@ -599,7 +671,9 @@ func mouseCallback(w *glfw.Window, x float64, y float64) {
 	lastX = x
 	lastY = y
 
-	camera.processMouseMovement(float32(xOffset), float32(yOffset), true)
+	if !showUI {
+		camera.processMouseMovement(float32(xOffset), float32(yOffset), true)
+	}
 }
 
 func checkGLError() {
@@ -607,4 +681,12 @@ func checkGLError() {
 	if err != 0 {
 		fmt.Printf("OpenGL error: %v\n", err)
 	}
+}
+func RecreatePillar(N, M int) {
+	spheres = createPillarOfSpheres(N, M, spacing, uiSeed) // Use the updated N and M from the UI
+	numGroups := FindGroups(spheres, N, M, spacing)        // Find connected groups
+	AssignColorsToGroups(spheres, numGroups)               // Assign colors based on group
+	InitInstanceBuffer(spheres)                            // Update GPU buffers with the new spheres
+	pillarM = M
+	pillarN = N
 }
