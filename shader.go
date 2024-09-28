@@ -1,13 +1,18 @@
 package main
 
 import (
+	"embed"
 	"log"
-	"os"
 	"unsafe"
 
 	"github.com/go-gl/gl/v4.1-core/gl"
 	"github.com/go-gl/mathgl/mgl32"
 )
+
+// Embed all shader files from the shaders/ directory
+//
+//go:embed shaders/*
+var shaderFiles embed.FS
 
 type Shader struct {
 	id uint32
@@ -16,12 +21,12 @@ type Shader struct {
 func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Shader, error) {
 
 	// Read shader programs from disk.
-	data, err := os.ReadFile(vertexPath)
+	data, err := shaderFiles.ReadFile(vertexPath)
 	if err != nil {
 		return nil, err
 	}
 	vertexShaderSource := string(data)
-	data, err = os.ReadFile(fragmentPath)
+	data, err = shaderFiles.ReadFile(fragmentPath)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +35,7 @@ func NewShader(vertexPath string, fragmentPath string, geometryPath string) (*Sh
 	var geometryShader uint32
 
 	if geometryPath != "" {
-		data, err = os.ReadFile(geometryPath)
+		data, err = shaderFiles.ReadFile(geometryPath)
 		if err != nil {
 			return nil, err
 		}

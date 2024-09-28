@@ -1,11 +1,12 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"image"
 	"log"
 	"math"
 	"math/rand"
-	"os"
 	"runtime"
 	"unsafe"
 
@@ -15,6 +16,9 @@ import (
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
 )
+
+//go:embed nebula.hdr
+var background []byte
 
 // Settings
 const (
@@ -136,7 +140,7 @@ func main() {
 	}
 
 	//* Load textures
-	hdrTexture := loadHDRTexture("nebula.hdr")
+	hdrTexture := loadHDRTexture()
 	envCubemap := setupCubemap(hdrTexture, equirectangularToCubemapShader)
 	// Create pillar of bubbles (positions only)
 	bubbles = createPillarOfBubbles(pillarN, pillarM, bubbleSpacing, initialSeed)
@@ -319,13 +323,9 @@ func setupCubemap(textureID uint32, equirectangularToCubemapShader *Shader) uint
 	return envCubemap
 }
 
-func loadHDRTexture(path string) uint32 {
-	file, err := os.Open(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-	hdrImg, _, err := image.Decode(file)
+func loadHDRTexture() uint32 {
+
+	hdrImg, _, err := image.Decode(bytes.NewReader(background))
 	if err != nil {
 		log.Fatal(err)
 	}
