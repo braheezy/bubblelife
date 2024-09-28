@@ -17,12 +17,6 @@
     "runArgs": [
         "--rm",
         "-v",
-        "${env:XDG_RUNTIME_DIR}:/tmp/wayland-socket",
-        "-e",
-        "XDG_RUNTIME_DIR=/tmp/wayland-socket",
-        "-e",
-        "WAYLAND_DISPLAY=${env:WAYLAND_DISPLAY}",
-        "-v",
         "/tmp/.X11-unix:/tmp/.X11-unix:rw",
         "-e",
         "DISPLAY=${env:DISPLAY}"
