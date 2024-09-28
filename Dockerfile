@@ -9,3 +9,4 @@ RUN go mod download && go mod verify
 
 COPY . .
 RUN go build -o /usr/bin/bubblelife
+ENTRYPOINT /usr/bin/bubblelife
