@@ -10,14 +10,12 @@ You can use Go or a container engine to run this project.
 
 **Container**
 
-Clone the project, then build a container and run it:
+Run it:
 
 ```bash
-git clone https://github.com/braheezy/bubblelife.git
-cd bubblelife
-docker build . -t localhost/bubblelife:latest
+
 # Assuming X11 compatible host
-docker run --rm -v /tmp/.X11-unix:/tmp/.X11-unix:rw -e DISPLAY=$DISPLAY localhost/bubblelife:latest bubblelife
+docker run --rm -v /tmp/.X11-unix:/tmp/.X11-unix:rw -e DISPLAY=$DISPLAY ghcr.io/braheezy/bubblelife:v0.1.0
 ```
 **Go**
 
@@ -26,7 +24,7 @@ You need the dependencies that [go-gl](https://github.com/go-gl/gl) has. That's 
 Then:
 
 ```bash
-go install github.com/braheezy/bubblelife
+go install github.com/braheezy/bubblelife@v0.1.0
 bubblelife
 ```
 
