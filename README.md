@@ -3,9 +3,12 @@ A 3D interpretation of Conway's Game of Life.
 
 Made with bubbles! :speech_balloon:
 
-![demo](./demo.mp4)
+![](https://github.com/user-attachments/assets/aafd42b5-59e9-416c-baa7-662810e6ce0f)
 
 ## Usage
+
+
+
 You can use Go or a container engine to run this project.
 
 **Container**
