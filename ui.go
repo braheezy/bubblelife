@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 	"github.com/go-gl/mathgl/mgl32"
@@ -13,7 +15,7 @@ var (
 	// mouseLocked       = true             // Toggles whether the mouse is locked or unlocked
 	uiN, uiM          = pillarN, pillarM // Default N and M values (can be updated via UI)
 	uiSeed            = initialSeed      // Default seed value
-	uiGenerationSpeed = 2.0              // Default generation speed (seconds)
+	uiGenerationSpeed = generationSpeed  // Default generation speed (seconds)
 )
 
 // // Toggle the UI visibility and mouse lock state
@@ -39,43 +41,57 @@ func RenderUI(window *glfw.Window, text *TextRenderer, spheres []*Sphere, fps fl
 
 	// Render the UI if it's toggled on
 	if showUI {
-		// Simple UI layout (could be more sophisticated)
 		menuY := float32(100.0)
 		spacing := float32(30.0)
 
 		// Display the menu title
 		text.RenderText("UI Menu (Press Tab to Toggle)", 5.0, menuY, 1.0, white)
 
-		// Display and highlight selected options with visual feedback
-		optionColor := white                        // Default color for non-selected options
+		// Highlight the selected option
 		highlightColor := mgl32.Vec3{0.2, 1.0, 0.2} // Greenish highlight color
 
-		// Render Pillar Size - N (Highlight if selected)
+		// Render the options (highlight if selected)
+
+		// Pillar Size - N
 		if selectedOption == 0 {
-			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.2, highlightColor)
+			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.2, highlightColor) // Highlighted
 		} else {
-			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.0, optionColor)
+			text.RenderText(fmt.Sprintf("Pillar Size - N: %d", uiN), 5.0, menuY+spacing, 1.0, white) // Regular
 		}
 
-		// Render Pillar Size - M (Highlight if selected)
+		// Pillar Size - M
 		if selectedOption == 1 {
-			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.2, highlightColor)
+			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.2, highlightColor) // Highlighted
 		} else {
-			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.0, optionColor)
+			text.RenderText(fmt.Sprintf("Pillar Size - M: %d", uiM), 5.0, menuY+2*spacing, 1.0, white) // Regular
 		}
 
-		// Render Seed (Highlight if selected)
+		// Seed
 		if selectedOption == 2 {
-			text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.2, highlightColor)
+			if len(inputBuffer) > 0 {
+				text.RenderText(fmt.Sprintf("Seed: %s", inputBuffer), 5.0, menuY+3*spacing, 1.2, highlightColor) // Show typed input
+			} else {
+				text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.2, highlightColor) // Show current seed
+			}
 		} else {
-			text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.0, optionColor)
+			text.RenderText(fmt.Sprintf("Seed: %d", uiSeed), 5.0, menuY+3*spacing, 1.0, white) // Regular
 		}
 
-		// Render Generation Speed (Highlight if selected)
+		// Generation Speed
 		if selectedOption == 3 {
-			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.2, highlightColor)
+			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.2, highlightColor) // Highlighted
 		} else {
-			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.0, optionColor)
+			text.RenderText(fmt.Sprintf("Generation Speed: %.2f sec", uiGenerationSpeed), 5.0, menuY+4*spacing, 1.0, white) // Regular
 		}
 	}
+}
+
+// Helper function to validate and clamp the seed value between 1 and int32
+func validateAndClampSeed(input string) int64 {
+	// Convert the string to an int32 (safely)
+	seed, err := strconv.Atoi(input)
+	if err != nil || seed < 1 {
+		return 1
+	}
+	return int64(math.Min(float64(seed), float64(math.MaxInt64)))
 }

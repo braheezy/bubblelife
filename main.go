@@ -50,9 +50,10 @@ var (
 	rightPressed      = false
 	initialSeed       = int64(42)
 
-	pillarN = 10
-	pillarM = 20
-	spheres []*Sphere
+	pillarN         = 10
+	pillarM         = 20
+	spheres         []*Sphere
+	generationSpeed = 5.0
 )
 
 func init() {
@@ -237,7 +238,6 @@ func main() {
 	text.Load("fonts/ocraext.ttf", 24)
 
 	var lastGoLUpdateTime float64 = 0.0
-	var goLUpdateInterval float64 = 5.0
 
 	scrWidth, scrHeight := window.GetFramebufferSize()
 	gl.Viewport(0, 0, int32(scrWidth), int32(scrHeight))
@@ -261,7 +261,7 @@ func main() {
 		gl.ClearColor(0.0, 0.0, 0.0, 1.0)
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		if currentFrame-lastGoLUpdateTime >= goLUpdateInterval {
+		if currentFrame-lastGoLUpdateTime >= generationSpeed {
 			updateGameOfLife(spheres, pillarN, pillarM)
 			lastGoLUpdateTime = currentFrame // Reset the last update time
 			generation++
@@ -552,6 +552,12 @@ func createPillarOfSpheres(N, M int, spacing float32, seed int64) []*Sphere {
 func framebufferSizeCallback(w *glfw.Window, width int, height int) {
 	gl.Viewport(0, 0, int32(width), int32(height))
 }
+
+var inputBuffer string // Buffer to store typed input for the seed
+var numberKeyPressed = make(map[glfw.Key]bool)
+var backspacePressed bool
+var enterPressed bool
+
 func processInput(w *glfw.Window) {
 	if w.GetKey(glfw.KeyEscape) == glfw.Press {
 		w.SetShouldClose(true)
@@ -616,6 +622,50 @@ func processInput(w *glfw.Window) {
 				rightPressed = true
 				pillarChanged = true // Mark pillar for recreation
 			}
+		} else if selectedOption == 2 { // Seed input
+			// Handle numerical input for the seed
+			for key := glfw.Key0; key <= glfw.Key9; key++ {
+				// Check if the key is pressed and hasn't been handled yet
+				if w.GetKey(key) == glfw.Press && !numberKeyPressed[key] {
+					inputBuffer += string(rune('0' + key - glfw.Key0)) // Append the pressed number
+					numberKeyPressed[key] = true                       // Mark the key as pressed
+				}
+
+				// Reset the key state when it is released
+				if w.GetKey(key) == glfw.Release {
+					numberKeyPressed[key] = false
+				}
+			}
+
+			// Backspace key to delete last digit (with debounce)
+			if w.GetKey(glfw.KeyBackspace) == glfw.Press && !backspacePressed && len(inputBuffer) > 0 {
+				inputBuffer = inputBuffer[:len(inputBuffer)-1] // Remove last character
+				backspacePressed = true                        // Mark backspace as pressed
+			}
+			if w.GetKey(glfw.KeyBackspace) == glfw.Release {
+				backspacePressed = false // Reset backspace state when released
+			}
+
+			// Enter key to confirm the seed input (with debounce)
+			if w.GetKey(glfw.KeyEnter) == glfw.Press && !enterPressed && len(inputBuffer) > 0 {
+				uiSeed = validateAndClampSeed(inputBuffer) // Validate and clamp the seed value
+				inputBuffer = ""                           // Clear the input buffer
+				pillarChanged = true                       // Mark pillar for recreation
+				enterPressed = true                        // Mark enter as pressed
+			}
+			if w.GetKey(glfw.KeyEnter) == glfw.Release {
+				enterPressed = false // Reset enter state when released
+			}
+		} else if selectedOption == 3 { // Generation speed
+			if w.GetKey(glfw.KeyLeft) == glfw.Press && !leftPressed {
+				uiGenerationSpeed = max(0, uiGenerationSpeed-1)
+				leftPressed = true
+			}
+			if w.GetKey(glfw.KeyRight) == glfw.Press && !rightPressed {
+				uiGenerationSpeed++ // Increase M
+				rightPressed = true
+			}
+			generationSpeed = uiGenerationSpeed
 		}
 
 		// Release left/right key press flags
@@ -626,9 +676,9 @@ func processInput(w *glfw.Window) {
 			rightPressed = false
 		}
 
-		// If the pillar size changed, recreate the pillar
+		// If the pillar size changed or the seed was updated, recreate the pillar
 		if pillarChanged {
-			RecreatePillar(uiN, uiM)
+			RecreatePillar(uiN, uiM) // Use the updated values of uiN, uiM, and uiSeed
 		}
 	} else {
 		// Handle camera movement when UI is not being shown
