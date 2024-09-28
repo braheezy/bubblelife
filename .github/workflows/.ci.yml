@@ -21,6 +21,12 @@ jobs:
         with:
           go-version: "1.23.0"
 
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt install -y libgl1-mesa-dev xorg-dev
+          go mod download
+
       - name: Build for Linux
         run: |
           go build .
