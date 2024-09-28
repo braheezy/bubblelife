@@ -38,8 +38,8 @@ bubblelife
 |Toggle UI menu	|Tab|	Toggles the visibility of the UI menu.
 |Navigate UI (down)	|Down Arrow	|Moves down through UI options.
 |Navigate UI (up)	|Up Arrow	|Moves up through UI options.
-|Adjust Pillar Size (N)	|Left/Right Arrow (when option 0)|	Adjusts the pillar size N (min 2).
-|Adjust Pillar Size (M)	|Left/Right Arrow (when option 1)|	Adjusts the pillar size M (min 2).
+|Adjust Pillar width	|Left/Right Arrow (when option 0)|	Adjusts the pillar size N (min 2).
+|Adjust Pillar height	|Left/Right Arrow (when option 1)|	Adjusts the pillar size M (min 2).
 |Enter seed	|0-9 (when option 2)|	Enters numerical input for the seed.
 |Delete last seed digit	|Backspace|	Removes the last digit entered for the seed.
 |Confirm seed	|Enter|	Confirms the seed input.
