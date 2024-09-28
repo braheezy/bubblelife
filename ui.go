@@ -40,6 +40,7 @@ var (
 	numberKeyPressed = make(map[glfw.Key]bool)
 	backspacePressed bool
 	enterPressed     bool
+	shiftPressed     bool
 
 	// Buffer to store typed input for the seed
 	inputBuffer string
@@ -222,6 +223,7 @@ func processInput(w *glfw.Window) {
 			recreatePillar(uiN, uiM)
 		}
 	}
+
 	// Handle camera movement when UI is not being shown
 	if w.GetKey(glfw.KeyW) == glfw.Press {
 		camera.processKeyboard(FORWARD, float32(deltaTime))
@@ -234,6 +236,15 @@ func processInput(w *glfw.Window) {
 	}
 	if w.GetKey(glfw.KeyD) == glfw.Press {
 		camera.processKeyboard(RIGHT, float32(deltaTime))
+	}
+
+	// Allow escaping window
+	if w.GetKey(glfw.KeyLeftShift) == glfw.Press && !shiftPressed {
+		shiftPressed = true
+		w.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+	}
+	if w.GetKey(glfw.KeyLeftShift) == glfw.Release {
+		shiftPressed = false
 	}
 
 }
